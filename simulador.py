@@ -12,29 +12,82 @@ st.set_page_config(layout="wide")
 COLOR_PRINCIPAL = "#3498DB"
 hoy = datetime.date.today()
 
-# Sidebar: parámetros del simulador
+# --- LÓGICA DE SINCRONIZACIÓN DE FECHAS (Uso de Session State) ---
+
+# 1. Definimos las funciones que se ejecutarán cuando un widget cambie.
+#    Estas funciones actualizan el valor del otro widget relacionado.
+
+def actualizar_fecha_pago():
+    """Se ejecuta cuando cambia el número de días o la fecha de giro."""
+    st.session_state.fecha_pago = st.session_state.fecha_giro + datetime.timedelta(days=st.session_state.plazo_dias)
+
+def actualizar_plazo_dias():
+    """Se ejecuta cuando cambia la fecha de pago."""
+    st.session_state.plazo_dias = (st.session_state.fecha_pago - st.session_state.fecha_giro).days
+
+# 2. Inicializamos los valores en el st.session_state si es la primera vez que se ejecuta.
+#    Esto evita que los valores se reseteen con cada interacción.
+if 'plazo_dias' not in st.session_state:
+    st.session_state.plazo_dias = 60
+if 'fecha_giro' not in st.session_state:
+    st.session_state.fecha_giro = hoy
+if 'fecha_pago' not in st.session_state:
+    st.session_state.fecha_pago = hoy + datetime.timedelta(days=st.session_state.plazo_dias)
+
+
+# --- INTERFAZ DE USUARIO (SIDEBAR) ---
+
 st.sidebar.header("Parámetros de la Factura")
 monto_factura = st.sidebar.number_input("Monto de la factura", min_value=1000.0, value=40000.0)
 
 producto = st.sidebar.selectbox("Producto", [
-    "Arándanos", "Uvas", "Bananas", "Enlatados", "Aceite", 
+    "Arándanos", "Uvas", "Bananas", "Enlatados", "Aceite",
     "Aguacate", "Congelados", "Harina", "Polipropileno", "Cerezas", "Otros"
 ])
+
+haircut_option = st.sidebar.radio(
+    "Seleccionar tipo de Haircut",
+    ('Por producto', 'Manual')
+)
+
 haircuts = {
     "Arándanos": 0.25, "Uvas": 0.25, "Bananas": 0.25, "Enlatados": 0.10, "Aceite": 0.15,
-    "Aguacate": 0.20, "Congelados": 0.15, "Harina": 0.10, "Polipropileno": 0.10, "Cerezas": 0.40, "Otros"
-: 0.30}
-haircut = haircuts[producto]
+    "Aguacate": 0.20, "Congelados": 0.15, "Harina": 0.10, "Polipropileno": 0.10, "Cerezas": 0.40, "Otros": 0.30
+}
+
+if haircut_option == 'Por producto':
+    haircut = haircuts[producto]
+else:
+    haircut_manual = st.sidebar.number_input("Haircut manual (%)", min_value=0.0, max_value=100.0, value=20.0, step=0.1, format="%.2f")
+    haircut = haircut_manual / 100.0
 
 riesgo = st.sidebar.selectbox("Clasificación de riesgo", ["A", "B", "C"])
 tasas_mensuales = {"A": 0.009, "B": 0.012, "C": 0.015}
 tasa_mensual = tasas_mensuales[riesgo]
 
-# Fechas clave
+# --- Widgets de Fecha Sincronizados ---
+st.sidebar.subheader("Plazo del Financiamiento")
 fecha_otorgamiento = st.sidebar.date_input("Fecha de otorgamiento", hoy)
-fecha_giro = st.sidebar.date_input("Fecha de giro", hoy)
-fecha_pago = st.sidebar.date_input("Fecha de pago", hoy + datetime.timedelta(days=60))
-plazo_dias = (fecha_pago - fecha_giro).days
+
+# 3. Creamos los widgets y les asignamos una 'key' para acceder a ellos
+#    desde el session_state y una función 'on_change' (callback).
+st.sidebar.date_input(
+    "Fecha de giro",
+    key='fecha_giro',
+    on_change=actualizar_fecha_pago
+)
+st.sidebar.number_input(
+    "Plazo en días",
+    min_value=1,
+    step=1,
+    key='plazo_dias',
+    on_change=actualizar_fecha_pago
+)
+st.sidebar.date_input(
+    "Fecha de pago",
+    key='fecha_pago',
+    on_change=actualizar_plazo_dias
+)
 
 # Otros parámetros
 dias_atraso = st.sidebar.slider("Días de atraso", 0, 60, 0)
@@ -43,9 +96,13 @@ seguro_credito_rate = st.sidebar.number_input("Seguro de crédito (%)", 0.0, val
 seguro_carga_rate = st.sidebar.number_input("Seguro de carga (%)", 0.0, value=0.10) / 100
 iva = 0.19
 
-# Cálculos financieros
+# --- CÁLCULOS FINANCIEROS (Usando valores del session_state) ---
+plazo_dias_calc = st.session_state.plazo_dias # Usamos el valor del estado
+fecha_giro_calc = st.session_state.fecha_giro
+fecha_pago_calc = st.session_state.fecha_pago
+
 tasa_diaria = (1 + tasa_mensual)**(1/30) - 1
-tasa_periodo = (1 + tasa_diaria)**plazo_dias - 1
+tasa_periodo = (1 + tasa_diaria)**plazo_dias_calc - 1
 tasa_atraso_mensual = 0.025
 tasa_atraso_diaria = (1 + tasa_atraso_mensual)**(1/30) - 1
 interes_atraso = monto_factura * ((1 + tasa_atraso_diaria)**dias_atraso - 1) if dias_atraso > 0 else 0
@@ -60,9 +117,9 @@ gastos_afectos_iva = costo_admin_total + seguro_credito + seguro_carga
 iva_total = gastos_afectos_iva * iva
 gastos_totales = interes + gastos_afectos_iva + iva_total
 monto_a_girar = monto_financiado - gastos_totales
-tir_efectiva = ((monto_financiado / monto_a_girar)**(360 / plazo_dias)) - 1 if monto_a_girar > 0 else 0
+tir_efectiva = ((monto_financiado / monto_a_girar)**(360 / plazo_dias_calc)) - 1 if plazo_dias_calc > 0 and monto_a_girar > 0 else 0
 
-# HTML de presentación
+# --- HTML de presentación ---
 st.markdown("<h1 style='text-align:center; color:#2C3E50;'>Simulador de Cotización de Financiamiento</h1>", unsafe_allow_html=True)
 
 html = f"""
@@ -75,16 +132,16 @@ html = f"""
 
   <div style="border: 2px solid {COLOR_PRINCIPAL}; padding: 15px 25px; border-radius: 10px; margin-bottom: 20px;">
     <h3>Producto 📦</h3>
-    <div style='font-size: 20px; font-weight: bold;'>{producto} <span style='font-size: 20px; font-weight: normal;'>(haircut: {haircut:.0%})</span></div>
+    <div style='font-size: 20px; font-weight: bold;'>{producto} <span style='font-size: 20px; font-weight: normal;'>(haircut: {haircut:.2%})</span></div>
   </div>
 
   <div style="border: 2px solid {COLOR_PRINCIPAL}; padding: 15px 25px; border-radius: 10px; margin-bottom: 20px;">
     <h3>Fechas 🗓️</h3>
     <ul style='font-size: 16px; padding-left: 20px;'>
       <li>Otorgamiento: <strong>{fecha_otorgamiento.strftime('%d-%b-%Y')}</strong></li>
-      <li>Giro del préstamo: <strong>{fecha_giro.strftime('%d-%b-%Y')}</strong></li>
-      <li>Pago esperado: <strong>{fecha_pago.strftime('%d-%b-%Y')}</strong></li>
-      <li>Días de financiamiento: <strong>{plazo_dias} días</strong></li>
+      <li>Giro del préstamo: <strong>{fecha_giro_calc.strftime('%d-%b-%Y')}</strong></li>
+      <li>Pago esperado: <strong>{fecha_pago_calc.strftime('%d-%b-%Y')}</strong></li>
+      <li>Días de financiamiento: <strong>{plazo_dias_calc} días</strong></li>
       <li>Días de atraso: <strong>{dias_atraso} días</strong></li>
     </ul>
   </div>
@@ -119,7 +176,7 @@ html = f"""
     <h3>Intereses Mora: </h3>
     <div style='font-size: 24px; font-weight: bold;'>USD ${interes_atraso:,.2f}</div>
     <h3>Monto Retenido - Intereses Mora: </h3>
-    <div style='font-size: 24px; font-weight: bold;'>USD ${monto_retenido-interes_atraso:,.2f}</div>       
+    <div style='font-size: 24px; font-weight: bold;'>USD ${monto_retenido-interes_atraso:,.2f}</div>      
     <h3>TIR Efectiva:</h3>
     <div style='font-size: 24px; font-weight: bold;'> {tir_efectiva*100:.2f}% anual</div> 
     <p style='font-size: 14px;'>* Considerando intereses y costos cobrados por adelantado</p>
@@ -129,4 +186,3 @@ html = f"""
 """
 
 st.markdown(html, unsafe_allow_html=True)
-
