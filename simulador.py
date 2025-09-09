@@ -62,7 +62,7 @@ else:
     haircut = haircut_manual / 100.0
 
 riesgo = st.sidebar.selectbox("Clasificación de riesgo", ["A", "B", "C"])
-tasas_mensuales = {"A": 0.009, "B": 0.012, "C": 0.017}
+tasas_mensuales = {"A": 0.009, "B": 0.012, "C": 0.015}
 tasa_mensual = tasas_mensuales[riesgo]
 
 # --- Widgets de Fecha Sincronizados ---
@@ -187,3 +187,4 @@ html = f"""
 
 
 st.markdown(html, unsafe_allow_html=True)
+
